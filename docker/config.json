@@ -1,0 +1,9 @@
+{
+    "iot_endpoint": "a1x30szgyfp50b-ats.iot.us-east-1.amazonaws.com",
+    "device_name": "dev-DDQA",
+    "cert": "dev-1",
+    "root_ca": "root_ca",
+    "key": "dev-1",
+    "device-type": "generic",
+    "controlled-device": ""
+}
