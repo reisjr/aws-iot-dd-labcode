@@ -46,7 +46,7 @@ class VirtualDevice:
 
 
     def log(self, msg):
-        ts = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc).isoformat()
+        ts = datetime.datetime.utcnow().isoformat()
         msg_formatted = "{} - {}".format(ts, str(msg))
         
         print(msg_formatted)
