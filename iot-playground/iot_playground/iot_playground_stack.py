@@ -50,7 +50,7 @@ class IotPlaygroundStack(core.Stack):
         bucket = aws_s3.Bucket(
             self, "SourceBucket",
             bucket_name="{}-{}-{}".format(props['namespace'].lower(), 
-                core.Aws.ACCOUNT_ID, rnd_suffix),
+                core.Aws.ACCOUNT_ID, core.Aws.REGION),
             versioned=True,
             removal_policy=core.RemovalPolicy.DESTROY)
 

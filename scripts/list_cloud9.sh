@@ -1,8 +1,8 @@
 #!/bin/bash
 
-function deploy_stacks() {
+function list_envs() {
     ACC_ID=`aws sts get-caller-identity --query "Account" --output text --profile $1`
-    echo "Deploying to PROFILE $1 / ACC_ID: $ACC_ID"
+    echo "Listing Cloud9 PROFILE $1 / ACC_ID: $ACC_ID"
     
     # export AWS_DEFAULT_REGION="us-east-1"
     # cdk deploy iot-playground codepipeline devicedefender \
@@ -15,26 +15,41 @@ function deploy_stacks() {
     #     --profile $1
     
     export AWS_DEFAULT_REGION="us-west-2"
-    cdk bootstrap "aws://${ACC_ID}/${AWS_DEFAULT_REGION}" \
+    aws cloud9 list-environments \
             --profile $1
-    cdk deploy iot-playground codepipeline devicedefender \
-        --require-approval never \
-        --profile $1
     
     # export AWS_DEFAULT_REGION="eu-west-1"
     # cdk deploy iot-playground codepipeline devicedefender \
     #     --require-approval never \
     #     --profile $1
-
 }
 
-deploy_stacks "ws01"
-deploy_stacks "ws02"
-deploy_stacks "ws03"
-deploy_stacks "ws04"
-deploy_stacks "ws05"
-deploy_stacks "ws06"
-deploy_stacks "ws07"
-deploy_stacks "ws08"
-deploy_stacks "ws09"
-deploy_stacks "ws10"
+function diff_cdk_stacks() {
+    echo "Listing CDK Stacks PROFILE $1"
+    export AWS_DEFAULT_REGION="us-west-2"
+    cdk diff --profile $1 --region "us-west-2"
+}
+
+
+diff_cdk_stacks "ws10"
+diff_cdk_stacks "ws01"
+diff_cdk_stacks "ws02"
+diff_cdk_stacks "ws03"
+diff_cdk_stacks "ws04"
+diff_cdk_stacks "ws05"
+diff_cdk_stacks "ws06"
+diff_cdk_stacks "ws07"
+diff_cdk_stacks "ws08"
+diff_cdk_stacks "ws09"
+
+list_envs "ws10"
+list_envs "ws01"
+list_envs "ws02"
+list_envs "ws03"
+list_envs "ws04"
+list_envs "ws05"
+list_envs "ws06"
+list_envs "ws07"
+list_envs "ws08"
+list_envs "ws09"
+

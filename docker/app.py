@@ -125,6 +125,12 @@ def create_app(cfg_file):
                 print(e)
                 data = e
 
+        if "reconnect" in request.args:
+            reconnect = request.args.get('reconnect')
+            print("Reconnect '{}'...".format(reconnect))
+            vd.force_reconnect()
+
+
         if "clean" in request.args:
             clean = request.args.get('clean')
             print("Disconnect clean '{}'...".format(clean))
@@ -148,16 +154,24 @@ def create_app(cfg_file):
                     
         return render_template("config.html", message=data)
 
-    
+    @app.route("/log")
+    def log():
+        global vd
+
+        log_list = vd.get_log_list()
+        
+        return render_template("log.html", log_list=log_list)
+
+
     def get_client_id(cfg_file):
-        return cfg_file['device_name']
+        return cfg_file["device_name"]
 
 
     def get_endpoint(cfg_file):
-        return cfg_file['iot_endpoint']
+        return cfg_file["iot_endpoint"]
     
     def get_device_type(cfg_file):
-        return cfg_file['device-type']
+        return cfg_file.get("device-type", "generic")
 
     def run_virtual_device(cfg_file_json):
         global vd

@@ -16,10 +16,10 @@ aws s3api delete-objects \
 
 aws s3 rb s3://${BUCKET_NAME}
 
-IMAGES_TO_DELETE=$( aws ecr list-images \
+IMAGES_TO_DELETE=$(aws ecr list-images \
     --region $ECR_REGION \
     --repository-name $ECR_REPO \
-    --query 'imageIds[*]' --output json )
+    --query 'imageIds[*]' --output json)
 
 aws ecr batch-delete-image \
     --region $ECR_REGION \
