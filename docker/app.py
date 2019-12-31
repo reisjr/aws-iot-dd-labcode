@@ -98,7 +98,7 @@ def create_app(cfg_file):
         global vd
         
         data = ""
-        data = json.dumps(vd.get_shadow())
+        data = json.dumps(vd.get_shadow(vd.name))
         print(data)
         
         #time.sleep(2)
@@ -198,6 +198,7 @@ def create_app(cfg_file):
 
         vd.register_last_will_and_testament("lwt", json.dumps(lwt))
         
+        vd.prepare_files(cfg_file_json)
         vd.setup()
         vd.start()
 
@@ -218,33 +219,6 @@ def create_app(cfg_file):
     atexit.register(interrupt)
 
     return app
-
-
-def setup(cfg_file):
-    iot_endpoint = cfg_file["iot_endpoint"]
-
-    with open("/tmp/iot_endpoint", "w") as file:
-        file.write("%s" % iot_endpoint)
-
-    dev_name = cfg_file["device_name"]
-    
-    with open("/tmp/device_name", "w") as file:
-        file.write("%s" % dev_name)
-
-    cert = cfg_file["cert"]
-
-    with open("/tmp/cert", "w") as file:
-        file.write("%s" % cert)
-    
-    key = cfg_file["key"]
-
-    with open("/tmp/key", "w") as file:
-        file.write("%s" % key)
-
-    root_ca = cfg_file["root_ca"]
-
-    with open("/tmp/rootCA.pem", "w") as file:
-        file.write("%s" % root_ca)
 
 
 if __name__ == '__main__':
@@ -268,8 +242,6 @@ if __name__ == '__main__':
     response = urllib.urlopen(os.environ['CONFIG_FILE_URL'])
     cfg_file = json.loads(response.read())
     
-    setup(cfg_file)
-
     app = create_app(cfg_file)
 
     app.run(threaded=True, host='0.0.0.0', port=PORT)

@@ -56,7 +56,7 @@ class IotPlaygroundStack(core.Stack):
 
         # ssm parameter to get bucket name later
         bucket_param = aws_ssm.StringParameter(
-            self, "ParameterB",
+            self, "ParameterBucketName",
             parameter_name=f"{props['namespace']}-bucket",
             string_value=bucket.bucket_name,
             description='IoT playground pipeline bucket'

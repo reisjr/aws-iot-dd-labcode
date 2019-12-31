@@ -5,11 +5,27 @@ import time
 import datetime
 import os
 import sys
+from enum import Enum
 
+if sys.version[0:1] == '3':
+    import urllib.request as urllib
+else:
+    import urllib as urllib
 
 DEFAULT_MQTT_PORT = 8883
 DEFAULT_SAMPLING_DELAY = 60
-LOG_SIZE = 15000 
+LOG_SIZE = 15000
+
+
+class JobStatus(Enum):
+    QUEUED = "QUEUED"
+    IN_PROGRESS = "IN_PROGRESS"
+    FAILED = "FAILED"
+    SUCCEEDED = "SUCCEEDED"
+    CANCELED = "CANCELED"
+    TIMED_OUT = "TIMED_OUT"
+    REJECTED = "REJECTED"
+    REMOVED = "REMOVED"
 
 
 class VirtualDevice:
@@ -45,12 +61,17 @@ class VirtualDevice:
         self.log("ENDPOINT : '{}'".format(endpoint))
 
 
+    # Logging method to print on stdout and store in memory for browser consumption
     def log(self, msg):
         ts = datetime.datetime.utcnow().isoformat()
         msg_formatted = "{} - {}".format(ts, str(msg))
         
         print(msg_formatted)
         self._log.push(msg_formatted)
+
+
+    def log_enter_callback(self, function_name, payload, topic, qos):
+        self.log(">{} - Received message '{}' on topic '{}' with QoS {}".format(function_name, str(payload), topic, str(qos)))
 
 
     def get_log_list(self):
@@ -74,74 +95,89 @@ class VirtualDevice:
         self._clean_disconnect = clean
 
 
-    def get_shadow(self):
+    def get_shadow(self, thing_name):
         self.log(">get_shadow")
-        self._mqtt_client.publish("$aws/things/{}/shadow/get".format(self.name), "", 0)
+        self._mqtt_client.publish("$aws/things/{}/shadow/get".format(thing_name), "", 0)
         
         return self.shadow
     
     
-    def get_jobs(self):
-        self.log(">get_jobs")
-        self._mqtt_client.publish("$aws/things/{}/jobs/get".format(self.name), "", 0)
+    def get_jobs(self, thing_name):
+        self.log(">get_jobs / Publishing empty message to '{}'".format("$aws/things/{}/jobs/get".format(thing_name)))
+        self._mqtt_client.publish("$aws/things/{}/jobs/get".format(thing_name), "", 0)
 
     
-    def handle_job_start_next_execution(self):
-        self.log(">handle_job_start_next_execution")
+    def start_next_queued_job(self):
+        self.log(">start_next_queued_job / Publish message to '{}'".format("$aws/things/{}/jobs/start-next".format(self.name)))
         
         req = { 
             "statusDetails": {
-                "string": "IN_PROGRESS"
+                "string": JobStatus.IN_PROGRESS.name
             },
             "stepTimeoutInMinutes": 1,
         }
 
         self._mqtt_client.publish("$aws/things/{}/jobs/start-next".format(self.name), json.dumps(req), 0)
+        self.log("<start_next_queued_job".format())
 
         return
 
 
-    def handle_job_start_next_execution_ack_callback(self, client, mid, message):
-        self.log(">handle_job_start_next_execution_ack_callback '{}' / '{}' / '{}'".format(client, mid, message))
+    def generate_response_doc(self, response, version, timeout):
+        status = JobStatus.FAILED
 
-        self.log(" handle_job_start_next_execution_ack_callback - Received message '" + str(message.payload) + "' on topic '" + message.topic + "' with QoS " + str(message.qos))
+        if response:
+            status = JobStatus.SUCCEEDED
 
-        self.log(" handle_job_start_next_execution_ack_callback - Doing stuff...")
+        req = {
+            "status": status.name,
+            "expectedVersion": version,
+            "stepTimeoutInMinutes": timeout,
+        }
+
+        return req
+
+
+    def handle_jobs_start_next_callback(self, client, mid, message):
+        self.log_enter_callback("handle_jobs_start_next_callback", message.payload, message.topic, message.qos)
+        self.log(" handle_jobs_start_next_callback - Doing stuff...")
         
         my_json = message.payload.decode('utf8').replace("'", '"')
         payload = json.loads(my_json)
         
-        self.log(" handle_job_start_next_execution_ack_callback\n{}".format(json.dumps(payload)))
+        self.log(" handle_jobs_start_next_callback\n{}".format(json.dumps(payload, indent=4, sort_keys=True)))
         
         job_id = payload["execution"]["jobId"]
         job_doc = payload["execution"]["jobDocument"]
         version = payload["execution"]["versionNumber"]
         
-        self.log(" handle_job_start_next_execution_ack_callback - JOB_ID: '{}' JOB_DOC: '{}'".format(job_id, job_doc))
+        self.log(" handle_jobs_start_next_callback - JOB_ID: '{}' JOB_VERSION: '{}'".format(job_id, version))
+        self.log(" handle_jobs_start_next_callback - JOB_DOC:\n\n{}\n\n".format(json.dumps(job_doc, indent=4, sort_keys=True)))
 
         if "action" in job_doc:
             action = job_doc["action"]
 
             if action.lower() == "rotate-cert":
                 self.log("Rotating cert...")
-                self.rotate_certificate(job_doc)
+                response = self.rotate_certificate(job_doc)
             elif action.lower() == "change-unit":
                 self.log("Changing unit...")
-                self.change_unit(job_doc)
+                response = self.change_unit(job_doc)
+            elif action.lower() == "update-firmware":
+                self.log("Updating firmware...")
+                response = self.update_firmware(job_doc)
             else:
                 self.log("Unknown action '{}'".format(action))
+                response = False
 
-        req = {
-            "status": "SUCCEEDED",
-            "expectedVersion": version,
-            "stepTimeoutInMinutes": 1,
-        }
+        req = self.generate_response_doc(response, version, 1)
 
-        self.log(" handle_job_start_next_execution_ack_callback - Stuff done")    
+        self.log(" handle_jobs_start_next_callback - Finished the requested action - Success? {}".format(response))    
+        self.log(" handle_jobs_start_next_callback - Response Doc: \n\n{}\n\n".format(json.dumps(req, indent=4, sort_keys=True)))
         
         self._mqtt_client.publish("$aws/things/{}/jobs/{}/update".format(self.name, job_id), json.dumps(req), 0)    
 
-        self.log("<handle_job_start_next_execution_ack_callback Notified")    
+        self.log("<handle_jobs_start_next_callback - Notified / Published message to '{}'".format("$aws/things/{}/jobs/{}/update".format(self.name, job_id)))
 
 
     def stop(self):
@@ -160,9 +196,7 @@ class VirtualDevice:
 
 
     def handle_shadow_update_callback(self, client, mid, message):
-        self.log(">handle_shadow_update_callback '{}' / '{}' / '{}'".format(client, mid, message))
-        self.log(" handle_shadow_update_callback - Received message '" + str(message.payload) + "' on topic '"
-            + message.topic + "' with QoS " + str(message.qos))
+        self.log_enter_callback("handle_shadow_update_callback", message.payload, message.topic, message.qos)
         
         my_json = message.payload.decode('utf8').replace("'", '"')
         payload = json.loads(my_json)
@@ -182,16 +216,10 @@ class VirtualDevice:
 
 
     def handle_cmd_reply_callback(self, client, mid, message):
-        self.log(">handle_cmd_reply_callback '{}' / '{}' / '{}'".format(client, mid, message))
-        self.log(" handle_cmd_reply_callback - Received message '" + str(message.payload) + "' on topic '"
-            + message.topic + "' with QoS " + str(message.qos))
+        self.log_enter_callback("handle_cmd_reply_callback", message.payload, message.topic, message.qos)
 
         my_json = message.payload.decode('utf8').replace("'", '"')
         payload = json.loads(my_json)
-
-        #type
-        #session-id
-        #response-topic
 
         if "type" in payload:
             type = payload["type"]
@@ -213,16 +241,15 @@ class VirtualDevice:
         self.log("<handle_cmd_reply_callback")
         return
 
+
     def last_will(self):
         return
 
+
     def handle_shadow_get_callback(self, client, mid, message):
-        self.log(">handle_shadow_get_callback '{}' / '{}' / '{}'".format(client, mid, message))
-        self.log(" handle_shadow_get_callback - Received message '" + str(message.payload) + "' on topic '"
-            + message.topic + "' with QoS " + str(message.qos))
-        
+        self.log_enter_callback("handle_shadow_get_callback", message.payload, message.topic, message.qos)
+
         topic = str(message.topic)
-        self.log("TOPIC: '{}'".format(topic))
 
         if "rejected" in topic:
             self.log("Shadow get rejected")
@@ -246,114 +273,108 @@ class VirtualDevice:
 
 
     def handle_jobs_get_callback(self, client, mid, message):
-        self.log(">handle_jobs_get_callback '{}' / '{}' / '{}'".format(client, mid, message))
-        self.log(" handle_jobs_get_callback - Received message '" + str(message.payload) + "' on topic '"
-            + message.topic + "' with QoS " + str(message.qos))
-        
+        self.log_enter_callback("handle_jobs_get_callback", message.payload, message.topic, message.qos)
+
         my_json = message.payload.decode('utf8').replace("'", '"')
         payload = json.loads(my_json)
         queue_jobs = payload['queuedJobs']
         in_progress_jobs = payload['inProgressJobs']
 
-        self.log(" handle_jobs_get_callback CLIENT_ID '{}'".format(self.name))
-        self.log(" handle_jobs_get_callback QUEUE_JOBS '{}'".format(queue_jobs))
-        self.log(" handle_jobs_get_callback IN_PROGRESS_JOBS '{}'".format(in_progress_jobs))
+        self.log(" handle_jobs_get_callback - CLIENT_ID '{}'".format(self.name))
+        self.log(" handle_jobs_get_callback - QUEUE_JOBS '{}'".format(queue_jobs))
+        self.log(" handle_jobs_get_callback - IN_PROGRESS_JOBS '{}'".format(in_progress_jobs))
 
         if queue_jobs: 
-            self.handle_job_start_next_execution()
-
-        # for q_job in queue_jobs:
-        #     job_id = q_job['jobId']
-        #     exec_number = q_job['executionNumber']
-
-        #     self.log(" handle_jobs_get_callback GETTING DATA FOR QUEUED '{}' EXEC_# '{}'".format(job_id, exec_number))
-
-        #     job_req = { 
-        #         #"executionNumber": exec_number,
-        #         "includeJobDocument": True,
-        #         "clientToken": "sample-token" 
-        #     }
-
-        #     self._mqtt_client.publish("$aws/things/{}/jobs/{}/get".format(client_id, str(job_id)), json.dumps(job_req), 0)
-    
-        
+            self.log(" handle_jobs_get_callback - There are jobs queued. Starting...")
+            self.start_next_queued_job()
+        elif in_progress_jobs:
+            self.log(" handle_jobs_get_callback - There are jobs in progress...")
+        else:
+            self.log(" handle_jobs_get_callback - No outstanding jobs found")
+            
         return
 
 
-    '''
-    {
-      "timestamp": 1571176725,
-      "execution": {
-        "jobId": "test2",
-        "status": "QUEUED",
-        "queuedAt": 1571176724,
-        "lastUpdatedAt": 1571176724,
-        "versionNumber": 1,
-        "executionNumber": 1,
-        "jobDocument": {
-          "op": "test"
-        }
-      }
-    }
-    '''
     def handle_jobs_notify_next_callback(self, client, mid, message):
-        self.log(">handle_jobs_notify_next_callback '{}' / '{}' / '{}'".format(client, mid, message))
-        self.log(" handle_jobs_notify_next_callback - Received message '" + str(message.payload) + "' on topic '"
-            + message.topic + "' with QoS " + str(message.qos))
-
+        self.log_enter_callback("handle_jobs_notify_next_callback", message.payload, message.topic, message.qos)
+        
         my_json = message.payload.decode('utf8').replace("'", '"')
         payload = json.loads(my_json)
 
         if 'execution' in payload :
-            exec_number = payload['execution']['executionNumber']
-
-        #       { 
-        #    "executionNumber": long,
-        #    "includeJobDocument": boolean,
-        #    "clientToken": "string" 
-        #}
-
-            job_req = { 
-                "executionNumber": exec_number,
-                "includeJobDocument": True,
-                "clientToken": "sample-token" 
-            }
-
-            self.handle_job_start_next_execution()
+            self.log("<handle_jobs_notify_next_callback - Pending jobs found, processing...")
+            self.start_next_queued_job()            
         else:
-            self.log(" handle_jobs_notify_next_callback - NO PENDING JOB, NOTHING TO DO")
+            self.log("<handle_jobs_notify_next_callback - NO PENDING JOB, NOTHING TO DO")
 
         return
 
+
     def handle_job_get_callback(self, client, mid, message):
-        self.log(">handle_job_get_callback '{}' / '{}' / '{}'".format(client, mid, message))
-        self.log(" handle_job_get_callback - Received message '" + str(message.payload) + "' on topic '"
-            + message.topic + "' with QoS " + str(message.qos))
-        
+        self.log_enter_callback("handle_job_get_callback", message.payload, message.topic, message.qos)
+
         my_json = message.payload.decode('utf8').replace("'", '"')
         payload = json.loads(my_json)
 
         return
+
+
+    def update_firmware(self, job_doc):
+        self.log(">update_firmware")
+        
+        success = False
+
+        try: # Trying to be more resilient
+            if 'firmware_file_url' not in job_doc:
+                self.log(" update_firmware - firmware file not found")
+                success = False
+            else:            
+                firmware_file_url = job_doc['firmware_file_url']
+
+                self.log(" update_firmware - Downloading firmware from '{}'".format(firmware_file_url))
+                response = urllib.urlopen(firmware_file_url)
+                self.log(" update_firmware - Downloaded\n{}".format(response.read()))
+                
+                # Doing stuff
+                for i in range(1, 4):
+                    self.log(" update_firmware - Installing... {}".format(i))
+                    time.sleep(2)
+                
+                self.log(" update_firmware - Installed".format())
+                
+                success = True
+        except Exception as e:
+            self.log(e)
+            success = False
+
+        return success
 
 
     def rotate_certificate(self, job_doc):
         self.log(">rotate_certificate")
 
-        if 'config_file_url' not in job_doc:
-            self.log(" rotate_certificate - config file not found")
-            return
-        
-        cfg_file_url = job_doc['config_file_url']
-                
-        if sys.version[0:1] == '3':
-            import urllib.request as urllib
-        else:
-            import urllib as urllib
+        success = False
+        try: # Trying to be more resilient
+            if 'config_file_url' not in job_doc:
+                self.log(" rotate_certificate - config file not found")
+                success = False
+            else:
+                cfg_file_url = job_doc['config_file_url']
+                    
+                response = urllib.urlopen(cfg_file_url)
+                cfg_file = json.loads(response.read())
 
-        response = urllib.urlopen(cfg_file_url)
-        cfg_file = json.loads(response.read())
+                self.backup_files()
+                self.prepare_files(json.dumps(cfg_file))
+                self.force_reconnect()
+
+                success = True
         
-        return
+        except Exception as e:
+            self.log(e)
+            success = False    
+            
+        return success
 
 
     def connect(self, mqtt_shadow_client):
@@ -389,6 +410,80 @@ class VirtualDevice:
         
         return connected
 
+    '''
+    SHADOW TOPICS
+        $aws/things/{}/shadow/update/accepted
+        $aws/things/{}/shadow/update/delta
+        $aws/things/{}/shadow/update/documents
+        $aws/things/{}/shadow/get/accepted
+    '''    
+    def setup_shadow_callbacks(self, thing_name):
+        # Subscribing only to accepted topics. In a production environment, the device should handle rejected messages as well.
+        self._mqtt_client.subscribe("$aws/things/{}/shadow/get/+".format(thing_name), 0, self.handle_shadow_get_callback)
+        self._mqtt_client.subscribe("$aws/things/{}/shadow/update/accepted".format(thing_name), 0, self.handle_shadow_update_callback)
+
+
+    def setup_jobs_callbacks(self, thing_name):
+        self.log("Subscribing to '{}' with callback '{}'".format("$aws/things/{}/jobs/notify-next".format(thing_name), "handle_jobs_notify_next_callback"))
+        self._mqtt_client.subscribe("$aws/things/{}/jobs/notify-next".format(thing_name), 0, self.handle_jobs_notify_next_callback)
+        
+        self.log("Subscribing to '{}' with callback '{}'".format("$aws/things/{}/jobs/get/#".format(thing_name), "handle_jobs_get_callback"))
+        self._mqtt_client.subscribe("$aws/things/{}/jobs/get/#".format(thing_name), 0, self.handle_jobs_get_callback)
+        
+        self.log("Subscribing to '{}' with callback '{}'".format("$aws/things/{}/jobs/+/get/+".format(thing_name), "handle_job_get_callback"))
+        self._mqtt_client.subscribe("$aws/things/{}/jobs/+/get/+".format(thing_name), 0, self.handle_job_get_callback)
+        
+        self.log("Subscribing to '{}' with callback '{}'".format("$aws/things/{}/jobs/start-next/#".format(thing_name), "handle_jobs_start_next_callback"))
+        self._mqtt_client.subscribe("$aws/things/{}/jobs/start-next/#".format(thing_name), 0, self.handle_jobs_start_next_callback)
+
+        #self._mqtt_client.subscribe("$aws/things/{}/jobs/get/accepted".format(client_id), 1, handle_jobs_get_callback)
+        #self._mqtt_client.subscribe("$aws/things/{}/jobs/get/rejected".format(client_id), 1, handle_jobs_get_callback)
+
+        return
+
+
+    def backup_files(self):
+        self.log(">backup_files")
+
+        os.rename("/tmp/iot_endpoint", "/tmp/iot_endpoint.bkp")
+        os.rename("/tmp/device_name", "/tmp/device_name.bkp")
+        os.rename("/tmp/cert", "/tmp/cert.bkp")
+        os.rename("/tmp/key", "/tmp/key.bkp")
+        os.rename("/tmp/rootCA.pem", "/tmp/rootCA.pem.bkp")
+
+        return
+        
+
+    def prepare_files(self, cfg_file_str):
+        cfg_file = json.loads(cfg_file_str)
+
+        iot_endpoint = cfg_file["iot_endpoint"]
+
+        with open("/tmp/iot_endpoint", "w") as file:
+            file.write("%s" % iot_endpoint)
+
+        dev_name = cfg_file["device_name"]
+        
+        with open("/tmp/device_name", "w") as file:
+            file.write("%s" % dev_name)
+
+        cert = cfg_file["cert"]
+
+        with open("/tmp/cert", "w") as file:
+            file.write("%s" % cert)
+        
+        key = cfg_file["key"]
+
+        with open("/tmp/key", "w") as file:
+            file.write("%s" % key)
+
+        root_ca = cfg_file["root_ca"]
+
+        with open("/tmp/rootCA.pem", "w") as file:
+            file.write("%s" % root_ca)
+
+        return
+
 
     def setup(self):
         self.log(">setup")
@@ -408,7 +503,7 @@ class VirtualDevice:
         self._mqtt_client.configureMQTTOperationTimeout(5)  # 5 sec
 
         if self._lwt_topic:
-            self.log("Setting LWT... '{}' / '{}'".format(self._lwt_topic, self._lwt_message))
+            self.log(" setup - Setting LWT... '{}' / '{}'".format(self._lwt_topic, self._lwt_message))
             mqtt_shadow_client.configureLastWill(self._lwt_topic, self._lwt_message, 1)
 
         if not self.connect(mqtt_shadow_client):
@@ -421,21 +516,10 @@ class VirtualDevice:
         time.sleep(2)
 
         #JOBS
-        self._mqtt_client.subscribe("$aws/things/{}/jobs/notify-next".format(self.name), 0, self.handle_jobs_notify_next_callback)
-        #self._mqtt_client.subscribe("$aws/things/{}/jobs/get/accepted".format(client_id), 1, handle_jobs_get_callback)
-        #self._mqtt_client.subscribe("$aws/things/{}/jobs/get/rejected".format(client_id), 1, handle_jobs_get_callback)
-        self._mqtt_client.subscribe("$aws/things/{}/jobs/get/#".format(self.name), 0, self.handle_jobs_get_callback)
-        self._mqtt_client.subscribe("$aws/things/{}/jobs/+/get/+".format(self.name), 0, self.handle_job_get_callback)
-        self._mqtt_client.subscribe("$aws/things/{}/jobs/start-next/#".format(self.name), 0, self.handle_job_start_next_execution_ack_callback)
+        self.setup_jobs_callbacks(self.name)
         
         #SHADOW TOPICS
-        #$aws/things/{}/shadow/update/accepted
-        #$aws/things/{}/shadow/update/delta
-        #$aws/things/{}/shadow/update/documents
-        #$aws/things/{}/shadow/get/accepted
-        # Subscribing only to accepted topics. In a production environment, the device should handle rejected messages as well.
-        self._mqtt_client.subscribe("$aws/things/{}/shadow/get/+".format(self.name), 0, self.handle_shadow_get_callback)
-        self._mqtt_client.subscribe("$aws/things/{}/shadow/update/accepted".format(self.name), 0, self.handle_shadow_update_callback)
+        self.setup_shadow_callbacks(self.name)
 
         #COMMAND / REPLY PATTERN
         self._mqtt_client.subscribe("cmd/ac/{}/req".format(self.name), 0, self.handle_cmd_reply_callback)
@@ -446,12 +530,12 @@ class VirtualDevice:
         self.log(">start")
 
         # check any pending job
-        self.log("Checking for pending jobs...")
-        self.get_jobs()
+        self.log(" start - Checking for pending jobs...")
+        self.get_jobs(self.name)
 
         # get shadow status
-        self.log("Getting shadow status...")
-        self.get_shadow()
+        self.log(" start - Getting shadow status...")
+        self.get_shadow(self.name)
 
         #moving to self to allow fast configuration change
         self._next_message_time = datetime.datetime.now()
@@ -461,24 +545,24 @@ class VirtualDevice:
 
             if self._next_message_time <= current_time:
                 #payload = { "temp" : 30 }
-                self.log(self._sampling_delay)
-                self.log("Sending to '{}' the payload below\n{}".format(self.mqtt_telemetry_topic, self.payload))
+                self.log(" start - Sampling delay {}".format(self._sampling_delay))
+                self.log(" start - Sending to '{}' the payload below\n{}".format(self.mqtt_telemetry_topic, self.payload))
                 self._mqtt_client.publish(self.mqtt_telemetry_topic.format(self.name), json.dumps(self.payload), 0)
                 self._next_message_time = current_time + datetime.timedelta(0, self._sampling_delay)
                         
             if self._stop: # Using next_message to stop the thread properly
-                self.log("Stopping...")
+                self.log(" start - Stopping...")
                 if self._clean_disconnect:
-                    self.log("Disconnecting from the broker...")
+                    self.log(" start - Disconnecting from the broker...")
                     self._mqtt_client.disconnect()
-                    self.log("Disconnected")
+                    self.log("<start - Disconnected")
                 else:
-                    self.log("Sudden disconnect...")
+                    self.log("<start - Sudden disconnect...")
 
                 break
             
             if self._force_reconnect:
-                self.log("Forcing reconnect...")
+                self.log(" start - Forcing reconnect...")
                 self._mqtt_client.configureCredentials("/tmp/rootCA.pem", "/tmp/key", "/tmp/cert")
                 self.connect(self._mqtt_client)
                 self._force_reconnect = False
