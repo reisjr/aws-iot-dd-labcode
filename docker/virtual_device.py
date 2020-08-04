@@ -12,6 +12,7 @@ if sys.version[0:1] == '3':
 else:
     import urllib as urllib
 
+
 DEFAULT_MQTT_PORT = 8883
 DEFAULT_SAMPLING_DELAY = 60
 LOG_SIZE = 15000
@@ -43,13 +44,13 @@ class VirtualDevice:
     # Class Attributes
     endpoint = "ep"
     name = "name"
-    mqtt_port = DEFAULT_MQTT_PORT    
+    mqtt_port = DEFAULT_MQTT_PORT
     mqtt_telemetry_topic = "dt/ac/company1/area1/{}/temp"
     shadow = {}
-    unit = "metric" # "imperial"    
+    unit = "metric" # "imperial"
     payload = { "temp" : 30 }
 
-    
+
     def __init__(self, name, endpoint):
         self.name = name
         self.endpoint = endpoint
@@ -65,7 +66,7 @@ class VirtualDevice:
     def log(self, msg):
         ts = datetime.datetime.utcnow().isoformat()
         msg_formatted = "{} - {}".format(ts, str(msg))
-        
+
         print(msg_formatted)
         self._log.push(msg_formatted)
 
@@ -80,7 +81,7 @@ class VirtualDevice:
 
     def set_sampling_delay(self, sampling_delay):
         self.log(">set_sampling_delay '{}'".format(sampling_delay))
-        
+
         self._sampling_delay = sampling_delay
         self._next_message_time = datetime.datetime.now()
 
@@ -98,19 +99,19 @@ class VirtualDevice:
     def get_shadow(self, thing_name):
         self.log(">get_shadow")
         self._mqtt_client.publish("$aws/things/{}/shadow/get".format(thing_name), "", 0)
-        
+
         return self.shadow
-    
-    
+
+
     def get_jobs(self, thing_name):
         self.log(">get_jobs / Publishing empty message to '{}'".format("$aws/things/{}/jobs/get".format(thing_name)))
         self._mqtt_client.publish("$aws/things/{}/jobs/get".format(thing_name), "", 0)
 
-    
+
     def start_next_queued_job(self):
         self.log(">start_next_queued_job / Publish message to '{}'".format("$aws/things/{}/jobs/start-next".format(self.name)))
-        
-        req = { 
+
+        req = {
             "statusDetails": {
                 "string": JobStatus.IN_PROGRESS.name
             },
@@ -123,7 +124,7 @@ class VirtualDevice:
         return
 
 
-    def generate_response_doc(self, response, version, timeout):
+    def generate_job_start_response_doc(self, response, version, timeout):
         status = JobStatus.FAILED
 
         if response:
@@ -141,16 +142,16 @@ class VirtualDevice:
     def handle_jobs_start_next_callback(self, client, mid, message):
         self.log_enter_callback("handle_jobs_start_next_callback", message.payload, message.topic, message.qos)
         self.log(" handle_jobs_start_next_callback - Doing stuff...")
-        
-        my_json = message.payload.decode('utf8').replace("'", '"')
+
+        my_json = message.payload.decode("utf8").replace("'", '"')
         payload = json.loads(my_json)
-        
+
         self.log(" handle_jobs_start_next_callback\n{}".format(json.dumps(payload, indent=4, sort_keys=True)))
-        
+
         job_id = payload["execution"]["jobId"]
         job_doc = payload["execution"]["jobDocument"]
         version = payload["execution"]["versionNumber"]
-        
+
         self.log(" handle_jobs_start_next_callback - JOB_ID: '{}' JOB_VERSION: '{}'".format(job_id, version))
         self.log(" handle_jobs_start_next_callback - JOB_DOC:\n\n{}\n\n".format(json.dumps(job_doc, indent=4, sort_keys=True)))
 
@@ -158,24 +159,24 @@ class VirtualDevice:
             action = job_doc["action"]
 
             if action.lower() == "rotate-cert":
-                self.log("Rotating cert...")
+                self.log(" handle_jobs_start_next_callback - Rotating cert...")
                 response = self.rotate_certificate(job_doc)
             elif action.lower() == "change-unit":
-                self.log("Changing unit...")
+                self.log(" handle_jobs_start_next_callback - Changing unit...")
                 response = self.change_unit(job_doc)
             elif action.lower() == "update-firmware":
-                self.log("Updating firmware...")
+                self.log(" handle_jobs_start_next_callback - Updating firmware...")
                 response = self.update_firmware(job_doc)
             else:
-                self.log("Unknown action '{}'".format(action))
+                self.log(" handle_jobs_start_next_callback - Unknown action '{}'".format(action))
                 response = False
 
-        req = self.generate_response_doc(response, version, 1)
+        req = self.generate_job_start_response_doc(response, version, 1)
 
-        self.log(" handle_jobs_start_next_callback - Finished the requested action - Success? {}".format(response))    
+        self.log(" handle_jobs_start_next_callback - Finished the requested action - Success? {}".format(response))
         self.log(" handle_jobs_start_next_callback - Response Doc: \n\n{}\n\n".format(json.dumps(req, indent=4, sort_keys=True)))
-        
-        self._mqtt_client.publish("$aws/things/{}/jobs/{}/update".format(self.name, job_id), json.dumps(req), 0)    
+
+        self._mqtt_client.publish("$aws/things/{}/jobs/{}/update".format(self.name, job_id), json.dumps(req), 0)
 
         self.log("<handle_jobs_start_next_callback - Notified / Published message to '{}'".format("$aws/things/{}/jobs/{}/update".format(self.name, job_id)))
 
@@ -184,59 +185,61 @@ class VirtualDevice:
         self.log(">stop")
         self._stop = True
 
-    
+
     def change_unit(self, job_doc):
         self.log(">change_unit")
 
         if "unit" in job_doc:
             self.log("Changing unit...")
-            self.unit = job_doc["unit"]    
+            self.unit = job_doc["unit"]
+
+        self.log("<change_unit")
 
         return
 
 
     def handle_shadow_update_callback(self, client, mid, message):
         self.log_enter_callback("handle_shadow_update_callback", message.payload, message.topic, message.qos)
-        
-        my_json = message.payload.decode('utf8').replace("'", '"')
+
+        my_json = message.payload.decode("utf8").replace("'", '"')
         payload = json.loads(my_json)
 
         self.shadow = payload
 
         with open("/tmp/shadow", "w") as file:
             file.write("%s" % json.dumps(payload))
-        
+
         if "state" in payload:
             if "desired" in payload["state"]:
                 self.log(payload["state"]["desired"])
 
         self.log("<handle_shadow_update_callback")
-        
-        return 
+
+        return
 
 
     def handle_cmd_reply_callback(self, client, mid, message):
         self.log_enter_callback("handle_cmd_reply_callback", message.payload, message.topic, message.qos)
 
-        my_json = message.payload.decode('utf8').replace("'", '"')
+        my_json = message.payload.decode("utf8").replace("'", '"')
         payload = json.loads(my_json)
 
         if "type" in payload:
             type = payload["type"]
             session_id = payload["session-id"]
             response_topic = payload["response-topic"]
-            
+
             #get_cmd_id()
             #do_stuff()
             #publish_reply(id)
-            
+
             resp = {
-                "session-id" : session_id,
-                "status" : "OK"
+                "session-id": session_id,
+                "status": "OK"
             }
-            
-            self._mqtt_client.publish(response_topic, json.dumps(resp), 0)    
-            
+
+            self._mqtt_client.publish(response_topic, json.dumps(resp), 0)
+
 
         self.log("<handle_cmd_reply_callback")
         return
@@ -252,58 +255,58 @@ class VirtualDevice:
         topic = str(message.topic)
 
         if "rejected" in topic:
-            self.log("Shadow get rejected")
+            self.log(" handle_shadow_get_callback - Shadow get rejected")
         else:
-            self.log("Shadow get accepted")
-            my_json = message.payload.decode('utf8').replace("'", '"')
+            self.log(" handle_shadow_get_callback - Shadow get accepted")
+            my_json = message.payload.decode("utf8").replace("'", '"')
             payload = json.loads(my_json)
 
             self.shadow = payload
 
             with open("/tmp/shadow", "w") as file:
                 file.write("%s" % json.dumps(payload))
-            
+
             if "state" in payload:
                 if "desired" in payload["state"]:
                     self.log(payload["state"]["desired"])
 
         self.log("<handle_shadow_get_callback")
-        
+
         return
 
 
     def handle_jobs_get_callback(self, client, mid, message):
         self.log_enter_callback("handle_jobs_get_callback", message.payload, message.topic, message.qos)
 
-        my_json = message.payload.decode('utf8').replace("'", '"')
+        my_json = message.payload.decode("utf8").replace("'", '"')
         payload = json.loads(my_json)
-        queue_jobs = payload['queuedJobs']
-        in_progress_jobs = payload['inProgressJobs']
+        queue_jobs = payload.get("queuedJobs")
+        in_progress_jobs = payload.get("inProgressJobs")
 
         self.log(" handle_jobs_get_callback - CLIENT_ID '{}'".format(self.name))
         self.log(" handle_jobs_get_callback - QUEUE_JOBS '{}'".format(queue_jobs))
         self.log(" handle_jobs_get_callback - IN_PROGRESS_JOBS '{}'".format(in_progress_jobs))
 
-        if queue_jobs: 
+        if queue_jobs:
             self.log(" handle_jobs_get_callback - There are jobs queued. Starting...")
             self.start_next_queued_job()
         elif in_progress_jobs:
             self.log(" handle_jobs_get_callback - There are jobs in progress...")
         else:
             self.log(" handle_jobs_get_callback - No outstanding jobs found")
-            
+
         return
 
 
     def handle_jobs_notify_next_callback(self, client, mid, message):
         self.log_enter_callback("handle_jobs_notify_next_callback", message.payload, message.topic, message.qos)
-        
-        my_json = message.payload.decode('utf8').replace("'", '"')
+
+        my_json = message.payload.decode("utf8").replace("'", '"')
         payload = json.loads(my_json)
 
         if 'execution' in payload :
             self.log("<handle_jobs_notify_next_callback - Pending jobs found, processing...")
-            self.start_next_queued_job()            
+            self.start_next_queued_job()
         else:
             self.log("<handle_jobs_notify_next_callback - NO PENDING JOB, NOTHING TO DO")
 
@@ -313,7 +316,7 @@ class VirtualDevice:
     def handle_job_get_callback(self, client, mid, message):
         self.log_enter_callback("handle_job_get_callback", message.payload, message.topic, message.qos)
 
-        my_json = message.payload.decode('utf8').replace("'", '"')
+        my_json = message.payload.decode("utf8").replace("'", '"')
         payload = json.loads(my_json)
 
         return
@@ -321,27 +324,27 @@ class VirtualDevice:
 
     def update_firmware(self, job_doc):
         self.log(">update_firmware")
-        
+
         success = False
 
         try: # Trying to be more resilient
             if 'firmware_file_url' not in job_doc:
                 self.log(" update_firmware - firmware file not found")
                 success = False
-            else:            
+            else:
                 firmware_file_url = job_doc['firmware_file_url']
 
                 self.log(" update_firmware - Downloading firmware from '{}'".format(firmware_file_url))
                 response = urllib.urlopen(firmware_file_url)
                 self.log(" update_firmware - Downloaded\n{}".format(response.read()))
-                
+
                 # Doing stuff
                 for i in range(1, 4):
                     self.log(" update_firmware - Installing... {}".format(i))
                     time.sleep(2)
-                
+
                 self.log(" update_firmware - Installed".format())
-                
+
                 success = True
         except Exception as e:
             self.log(e)
@@ -354,13 +357,14 @@ class VirtualDevice:
         self.log(">rotate_certificate")
 
         success = False
+
         try: # Trying to be more resilient
             if 'config_file_url' not in job_doc:
                 self.log(" rotate_certificate - config file not found")
                 success = False
             else:
                 cfg_file_url = job_doc['config_file_url']
-                    
+
                 response = urllib.urlopen(cfg_file_url)
                 cfg_file = json.loads(response.read())
 
@@ -369,46 +373,48 @@ class VirtualDevice:
                 self.force_reconnect()
 
                 success = True
-        
+
         except Exception as e:
             self.log(e)
-            success = False    
-            
+            success = False
+
         return success
 
 
+    # Connect to AWS IoT
     def connect(self, mqtt_shadow_client):
-        # Connect to AWS IoT
-        
+        self.log(">connect")
+
         connect_count = 0
         r = None
-        
+
         try:
-            self.log("Trying to connect '{}' '{}'...".format(self.endpoint, self.mqtt_port))
-            r = mqtt_shadow_client.connect()        
+            self.log(" connect - Trying to connect '{}' '{}'...".format(self.endpoint, self.mqtt_port))
+            r = mqtt_shadow_client.connect(30)
         except Exception as e:
-            self.log("FAILED")
+            self.log(" connect - FAILED")
             self.log(e)
 
         while(not r and connect_count <= 10):
             try:
                 time.sleep(5)
-                self.log("Trying to connect '{}' '{}'...".format(self.endpoint, self.mqtt_port))
+                self.log(" connect - Trying to connect '{}' '{}'...".format(self.endpoint, self.mqtt_port))
                 r = mqtt_shadow_client.connect()
                 connect_count += 1
             except Exception as e:
-                self.log("FAILED")
+                self.log(" connect - FAILED")
                 self.log(e)
-        
+
         connected = False
 
         if (r):
-            self.log("Device '{}' connected!".format(self.name))
+            self.log(" connect - Device '{}' connected!".format(self.name))
             connected = True
         else:
-            self.log("ERROR: Device '{}' NOT connected!".format(self.name))
-        
+            self.log(" connect - ERROR: Device '{}' NOT connected!".format(self.name))
+
         return connected
+
 
     '''
     SHADOW TOPICS
@@ -416,7 +422,7 @@ class VirtualDevice:
         $aws/things/{}/shadow/update/delta
         $aws/things/{}/shadow/update/documents
         $aws/things/{}/shadow/get/accepted
-    '''    
+    '''
     def setup_shadow_callbacks(self, thing_name):
         # Subscribing only to accepted topics. In a production environment, the device should handle rejected messages as well.
         self._mqtt_client.subscribe("$aws/things/{}/shadow/get/+".format(thing_name), 0, self.handle_shadow_get_callback)
@@ -426,13 +432,13 @@ class VirtualDevice:
     def setup_jobs_callbacks(self, thing_name):
         self.log("Subscribing to '{}' with callback '{}'".format("$aws/things/{}/jobs/notify-next".format(thing_name), "handle_jobs_notify_next_callback"))
         self._mqtt_client.subscribe("$aws/things/{}/jobs/notify-next".format(thing_name), 0, self.handle_jobs_notify_next_callback)
-        
+
         self.log("Subscribing to '{}' with callback '{}'".format("$aws/things/{}/jobs/get/#".format(thing_name), "handle_jobs_get_callback"))
         self._mqtt_client.subscribe("$aws/things/{}/jobs/get/#".format(thing_name), 0, self.handle_jobs_get_callback)
-        
+
         self.log("Subscribing to '{}' with callback '{}'".format("$aws/things/{}/jobs/+/get/+".format(thing_name), "handle_job_get_callback"))
         self._mqtt_client.subscribe("$aws/things/{}/jobs/+/get/+".format(thing_name), 0, self.handle_job_get_callback)
-        
+
         self.log("Subscribing to '{}' with callback '{}'".format("$aws/things/{}/jobs/start-next/#".format(thing_name), "handle_jobs_start_next_callback"))
         self._mqtt_client.subscribe("$aws/things/{}/jobs/start-next/#".format(thing_name), 0, self.handle_jobs_start_next_callback)
 
@@ -451,8 +457,10 @@ class VirtualDevice:
         os.rename("/tmp/key", "/tmp/key.bkp")
         os.rename("/tmp/rootCA.pem", "/tmp/rootCA.pem.bkp")
 
+        self.log("<backup_files")
+
         return
-        
+
 
     def prepare_files(self, cfg_file_str):
         cfg_file = json.loads(cfg_file_str)
@@ -463,7 +471,7 @@ class VirtualDevice:
             file.write("%s" % iot_endpoint)
 
         dev_name = cfg_file["device_name"]
-        
+
         with open("/tmp/device_name", "w") as file:
             file.write("%s" % dev_name)
 
@@ -471,7 +479,7 @@ class VirtualDevice:
 
         with open("/tmp/cert", "w") as file:
             file.write("%s" % cert)
-        
+
         key = cfg_file["key"]
 
         with open("/tmp/key", "w") as file:
@@ -495,7 +503,7 @@ class VirtualDevice:
         # For TLS mutual authentication
         mqtt_shadow_client.configureEndpoint(self.endpoint, self.mqtt_port)
         mqtt_shadow_client.configureCredentials("/tmp/rootCA.pem", "/tmp/key", "/tmp/cert")
-                
+
         self._mqtt_client = mqtt_shadow_client.getMQTTConnection()
         self._mqtt_client.configureOfflinePublishQueueing(-1)  # Infinite offline Publish queueing
         self._mqtt_client.configureDrainingFrequency(2)  # Draining: 2 Hz
@@ -507,7 +515,7 @@ class VirtualDevice:
             mqtt_shadow_client.configureLastWill(self._lwt_topic, self._lwt_message, 1)
 
         if not self.connect(mqtt_shadow_client):
-            return 
+            return
 
         # Create a deviceShadow with persistent subscription
         #deviceShadowHandler = myMQTTShadowClient.createShadowHandlerWithName(client_id, True)
@@ -517,7 +525,7 @@ class VirtualDevice:
 
         #JOBS
         self.setup_jobs_callbacks(self.name)
-        
+
         #SHADOW TOPICS
         self.setup_shadow_callbacks(self.name)
 
@@ -549,7 +557,7 @@ class VirtualDevice:
                 self.log(" start - Sending to '{}' the payload below\n{}".format(self.mqtt_telemetry_topic, self.payload))
                 self._mqtt_client.publish(self.mqtt_telemetry_topic.format(self.name), json.dumps(self.payload), 0)
                 self._next_message_time = current_time + datetime.timedelta(0, self._sampling_delay)
-                        
+
             if self._stop: # Using next_message to stop the thread properly
                 self.log(" start - Stopping...")
                 if self._clean_disconnect:
@@ -560,7 +568,7 @@ class VirtualDevice:
                     self.log("<start - Sudden disconnect...")
 
                 break
-            
+
             if self._force_reconnect:
                 self.log(" start - Forcing reconnect...")
                 self._mqtt_client.configureCredentials("/tmp/rootCA.pem", "/tmp/key", "/tmp/cert")
@@ -569,13 +577,13 @@ class VirtualDevice:
 
             time.sleep(0.5)
 
-    
+
     def register_last_will_and_testament(self, topic, message):
         self.log(">register_last_will_and_testament")
-        
+
         self._lwt_topic = topic
-        self._lwt_message = message 
-        
+        self._lwt_message = message
+
         return ""
 
 
@@ -593,23 +601,23 @@ class VirtualSwitch(VirtualDevice):
 
     def press_on(self):
         self.log(">press_on")
-        payload = json.dumps({"state": { "desired": { "status": "on" } }})
+        payload = json.dumps({"state": {"desired": {"status": "on"}}})
         self._mqtt_client.publish("$aws/things/{}/shadow/update".format(self.target_device), payload, 0)
-        
+
         return
 
 
     def press_off(self):
         self.log(">press_off")
-        payload = json.dumps({"state": { "desired": { "status": "off" } }})
+        payload = json.dumps({"state": {"desired": {"status": "off"}}})
         self._mqtt_client.publish("$aws/things/{}/shadow/update".format(self.target_device), payload, 0)
-        
+
         return
 
 
 class VirtualBulb(VirtualDevice):
 
-    is_on = False 
+    is_on = False
 
     def __init__(self, name, endpoint):
         VirtualDevice.__init__(self, name, endpoint)

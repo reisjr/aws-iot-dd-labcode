@@ -1,7 +1,7 @@
 #!/bin/bash
 
 PROFILE=sandbox
-URL=`aws s3 presign --expires-in 3000000 s3://dreis-sandbox-temp/dev-DDQA.json`
+URL=`aws s3 presign --expires-in 300000 s3://dreis-sandbox-temp/dev-DDQA.json --profile $PROFILE`
 PORT=8080
 
 echo "export AWS_PROFILE=$PROFILE"

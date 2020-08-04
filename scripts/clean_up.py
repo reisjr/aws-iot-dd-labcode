@@ -285,5 +285,5 @@ def clean_things_and_attached_resources(prefix=PREFIX):
 clean_device_defender_config()
 #delete_mitigation_actions()
 #delete_security_profiles()
-clean_iot_logging_config()
+#clean_iot_logging_config()
 #delete_role("IoTMitigationActionErrorLogging_Role")

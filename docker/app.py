@@ -32,7 +32,7 @@ def create_app(cfg_file):
         vd.stop()
 
         mqtt_thread.join()
-        
+
         print("<interrupt")
 
         return
@@ -57,19 +57,19 @@ def create_app(cfg_file):
     @app.route("/cert")
     def cert():
         data = ""
-        
+
         with open('/tmp/cert', 'r') as file:
             data = file.read()  #.replace('\n', '')
-        
+
         return render_template("cert.html", message=data)
 
     # @app.route("/key")
     def key():
         data = ""
-        
+
         with open('/tmp/key', 'r') as file:
             data = file.read()  #.replace('\n', '')
-        
+
         return data
 
 
@@ -79,33 +79,33 @@ def create_app(cfg_file):
 
         with open('/tmp/iot_endpoint', 'r') as file:
             data = file.read()  #.replace('\n', '')
-        
+
         return render_template("endpoint.html", message=data)
 
 
     @app.route("/name")
     def name():
         data = ""
-        
+
         with open('/tmp/device_name', 'r') as file:
             data = file.read()  #.replace('\n', '')
-        
+
         return data
 
 
     @app.route("/shadow")
     def shadow():
         global vd
-        
+
         data = ""
         data = json.dumps(vd.get_shadow(vd.name))
         print(data)
-        
+
         #time.sleep(2)
-        
+
         #with open('/tmp/shadow', 'r') as file:
         #    data = file.read()#.replace('\n', '')
-        
+
         return render_template("endpoint.html", message=data)
 
 
@@ -117,7 +117,7 @@ def create_app(cfg_file):
         if "time" in request.args:
             time = request.args.get('time')
             print("Changing time to '{}'...".format(time))
-            
+
             try:
                 vd.set_sampling_delay(int(time))
                 data = str(time)
@@ -134,7 +134,7 @@ def create_app(cfg_file):
         if "clean" in request.args:
             clean = request.args.get('clean')
             print("Disconnect clean '{}'...".format(clean))
-            
+
             try:
                 vd.set_clean_disconnect(clean)
             except Exception as e:
@@ -144,14 +144,14 @@ def create_app(cfg_file):
         if "topic" in request.args:
             topic = request.args.get('topic')
             print("Changing topic to '{}'...".format(topic))
-            
+
             try:
                 vd.mqtt_telemetry_topic = topic
                 data = topic
             except Exception as e:
                 print(e)
                 data = e
-                    
+
         return render_template("config.html", message=data)
 
     @app.route("/log")
@@ -159,7 +159,7 @@ def create_app(cfg_file):
         global vd
 
         log_list = vd.get_log_list()
-        
+
         return render_template("log.html", log_list=log_list)
 
 
@@ -169,7 +169,7 @@ def create_app(cfg_file):
 
     def get_endpoint(cfg_file):
         return cfg_file["iot_endpoint"]
-    
+
     def get_device_type(cfg_file):
         return cfg_file.get("device-type", "generic")
 
@@ -181,7 +181,7 @@ def create_app(cfg_file):
         client_id = get_client_id(cfg_file)
         endpoint = get_endpoint(cfg_file)
         dev_type = get_device_type(cfg_file)
-        
+
         if dev_type == "generic":
             vd = VirtualDevice(client_id, endpoint)
         elif dev_type == "bulb":
@@ -197,7 +197,7 @@ def create_app(cfg_file):
         }
 
         vd.register_last_will_and_testament("lwt", json.dumps(lwt))
-        
+
         vd.prepare_files(cfg_file_json)
         vd.setup()
         vd.start()
@@ -207,14 +207,14 @@ def create_app(cfg_file):
     def start_virtual_device(cfg_file):
         # Do initialisation stuff here
         global mqtt_thread
-        
+
         # Create your thread
         mqtt_thread = threading.Thread(target=run_virtual_device, args=(json.dumps(cfg_file),))
         mqtt_thread.start()
 
     # Initiate
     start_virtual_device(cfg_file)
-    
+
     # When you kill Flask (SIGTERM), clear the trigger for the next thread
     atexit.register(interrupt)
 
@@ -223,7 +223,7 @@ def create_app(cfg_file):
 
 if __name__ == '__main__':
     print(os.getenv('CONFIG_FILE_URL', ""))
-    
+
     cfg_file = {
         "iot_endpoint": "a1x30szgyfp50b-ats.iot.us-east-1.amazonaws.com",
         "device_name": "dev-DDQA",
@@ -241,7 +241,7 @@ if __name__ == '__main__':
 
     response = urllib.urlopen(os.environ['CONFIG_FILE_URL'])
     cfg_file = json.loads(response.read())
-    
+
     app = create_app(cfg_file)
 
     app.run(threaded=True, host='0.0.0.0', port=PORT)

@@ -19,3 +19,11 @@ Install the latest version of the AWS CDK CLI:
 ```
 $ npm i -g aws-cdk
 ```
+
+---
+
+# TODO
+- [ ] Command-and-reply pattern
+- [ ] Integration with Cognito
+- [ ] Control plane with web interface 
+- [ ] Rogue device
